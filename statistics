@@ -1,0 +1,92 @@
+#region 厂修备件/物料统计表
+/// <summary>
+/// 厂修备件/物料统计表
+/// </summary>
+/// <param name="conditions">查询条件</param>
+/// <returns>查询sql</returns>
+public IQueryable<ContractInfoDto> GetFactoryRepairParts(ContractInfoParam param)
+{
+var sort = param.sort;
+var order = param.order;
+
+// 船舶编号
+var shipId = param.ship;
+// 结算币种
+var currencyId = param.currencyId;
+// 合同开始日期
+var startdate = param.startdate;
+// 合同结束日期
+var enddate = param.enddate;
+// 当前船舶权限
+List<string> lstShips = param.lstShips;
+// 申请采购类别
+int intApplyTypeId = Int32.Parse(param.ApplyTypeId);
+
+// 合同时间
+DateTime dtStartDate = DateTime.Now.AddYears(-5);
+DateTime dtEndDate = DateTime.Now;
+
+if (!string.IsNullOrEmpty(startdate))
+{
+dtStartDate = DateTime.Parse(startdate.ToString());
+}
+if (!string.IsNullOrEmpty(enddate))
+{
+dtEndDate = DateTime.Parse(enddate.ToString() + " 23:59:59");
+}
+
+PmsSystemDbContext db = new PmsSystemDbContext();
+var purContract = from a in db.Set<PurContract>()
+where a.IsDelete != ContractCommon.DeletionFlag
+select a;
+
+purContract = purContract.Where(e => (e.ApplyMethod != ContractCommon.ContractAnnualDetails && e.ApplyMethod != ContractCommon.ContractAnnualFramework));
+if (!string.IsNullOrEmpty(shipId))
+{
+purContract = purContract.Where(e => (e.ShipId == shipId));
+}
+else
+{
+purContract = purContract.Where(e => lstShips.Contains(e.ShipId));
+}
+
+var q =
+from a in purContract
+join e in db.Set<STEMS.Pms.Entity.DicCurrency>() on a.CurrencyId.ToString() equals e.Id into join4
+from e in join4.DefaultIfEmpty()
+join f in db.Set<STEMS.Pms.Entity.Address>() on a.VendorId.ToString() equals f.VendorCode into join5
+from f in join5.DefaultIfEmpty()
+join b in db.Set<BaseShip>() on a.ShipId.ToString() equals b.Id into join1
+from b in join1.DefaultIfEmpty()
+where
+(string.IsNullOrEmpty(currencyId) || a.CurrencyId.ToString() == currencyId)
+&& (string.IsNullOrEmpty(startdate) || a.BeginDate >= dtStartDate)
+&& (string.IsNullOrEmpty(enddate) || a.BeginDate <= dtEndDate)
+&& a.IsRepair == 1
+&& a.ApplyTypeId == intApplyTypeId
+&& (a.ContractStatus == ContractCommon.ContractFormal || a.ContractStatus == 6 || a.ContractStatus == 7)
+orderby a.Opdate descending
+select new ContractInfoDto
+{
+ContaractId = a.ContaractId,
+ContractCode = a.ContractCode,
+ContractName = a.ContractName,
+VendorName = (languageVale == defaultLanguageVale ? f.VendorName : f.VendorName),
+CurrencyName = (languageVale == defaultLanguageVale ? e.Name : e.NameEn),
+BeginDate = a.BeginDate,
+EndDate = a.EndDate,
+CnyTaxFare = a.CNYTaxFare,
+Remarks = a.Memo,
+//ShipName = (languageVale == defaultLanguageVale ? b.NameLocal : b.Name)
+ShipName = (languageVale == defaultLanguageVale ? a.ShipId == "xxxx" ? "岸端" : b.NameLocal : a.ShipId == "xxxx" ? "corp" : b.Name)
+};
+
+IQueryable<ContractInfoDto> dataList = (IQueryable<ContractInfoDto>)q;
+
+if (!string.IsNullOrEmpty(sort) && !string.IsNullOrEmpty(order))
+{
+dataList = dataList.DataSorting(sort, order);
+}
+return dataList;
+}
+#endregion
