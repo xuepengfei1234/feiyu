@@ -1,0 +1,263 @@
+#region 采购明细-添加
+/// <summary>
+/// 采购明细-年度申请单添加
+/// </summary>
+/// <param name="updateData">添加的行</param>
+/// <returns></returns>
+public bool ProContractPurchaseAdd(List<PurContractDetailDto> updateData, string contaractId, string applyId)
+{
+PmsSystemDbContext db = new PmsSystemDbContext();
+
+PurContract objInfo = db.Set<PurContract>().SingleOrDefault(q => q.IsDelete != ContractCommon.DeletionFlag && q.ContaractId == contaractId);
+
+int? intItemNo = db.Set<PurContractDetail>().Where(e => e.ContractId == objInfo.ContaractId && e.ShipId == objInfo.ShipId).Max(e => e.ItemNo);
+intItemNo = intItemNo == null ? 0 : intItemNo;
+
+foreach (var item in updateData)
+{
+if (objInfo != null)
+{
+intItemNo++;
+//采购明细
+PurContractDetail purContractDetail = new PurContractDetail();
+purContractDetail.ItemId = Guid.NewGuid().ToString();
+purContractDetail.ContractId = objInfo.ContaractId;
+purContractDetail.ShipId = objInfo.ShipId;
+purContractDetail.ApplyCode = objInfo.ApplyCode;
+purContractDetail.LocalCode = item.Localcode;
+purContractDetail.MaterialId = item.MaterialId;
+purContractDetail.MaterialNameCn = item.MaterialNameCn;
+purContractDetail.MaterialNameEn = item.MaterialNameEn;
+purContractDetail.MaterialCode = item.MaterialCode;
+purContractDetail.PackDesc = item.PackDesc;
+purContractDetail.SpecModel = item.SpecModel;
+//purContractDetail.Num = item.Num;
+purContractDetail.Unit = item.UnitId;
+//purContractDetail.Price = item.Price;
+//purContractDetail.Total = item.Num * item.Price;
+purContractDetail.DeviceName = item.DeviceName;
+
+// 这个要取个最大值
+purContractDetail.ItemNo = intItemNo;
+db.Set<PurContractDetail>().Add(purContractDetail);
+}
+}
+
+try
+{
+if (db.SaveChanges() > 0)
+{
+return true;
+}
+return false;
+}
+catch (DbEntityValidationException dbEx)
+{
+throw new ArgumentOutOfRangeException(dbEx.ToString());
+}
+}
+#endregion
+
+
+
+
+#region 采购明细-删除
+/// <summary>
+/// 采购明细-删除
+/// </summary>
+/// <param name="updateData">删除的行</param>
+/// <returns></returns>
+public bool ProContractPurchaseDel(List<PurContractDetailDto> updateData, string contaractId)
+{
+PmsSystemDbContext db = new PmsSystemDbContext();
+PurContract objInfo = db.Set<PurContract>().SingleOrDefault(q => q.IsDelete != ContractCommon.DeletionFlag && q.ContaractId == contaractId);
+foreach (var item in updateData)
+{
+PurContractDetail purContractDetail = db.Set<PurContractDetail>().SingleOrDefault(q => q.IsDelete != ContractCommon.DeletionFlag && q.ContractId == objInfo.ContaractId && q.ShipId == objInfo.ShipId && q.MaterialId == item.MaterialId);
+if (purContractDetail != null)
+{
+purContractDetail.IsDelete = ContractCommon.DeletionFlag;
+db.Set<PurContractDetail>().Attach(purContractDetail);
+db.Entry(purContractDetail).State = System.Data.Entity.EntityState.Modified;
+}
+}
+try
+{
+if (db.SaveChanges() > 0)
+{
+PmsSystemDbContext db1 = new PmsSystemDbContext();
+PurContract purContract = db1.Set<PurContract>().Where(q => q.ContaractId == contaractId).FirstOrDefault();
+// 合同明细信息
+List<PurContractDetail> listPurContractDetail = db.Set<PurContractDetail>().Where(q => q.IsDelete != 1 && q.ContractId == contaractId).ToList();
+// 总税费
+decimal? taxesPrice = listPurContractDetail.Where(q => q.IsDelete != 1 && q.ContractId == contaractId).Sum(e => e.TaxesPrice);
+// 总价
+decimal? total = listPurContractDetail.Where(q => q.IsDelete != 1 && q.ContractId == contaractId).Sum(e => e.Total);
+
+decimal? varUsdFareNum = 0;
+decimal? varUsdTaxFareNum = 0;
+decimal? varCnyFareNum = 0;
+decimal? varCnyTaxFareNum = 0;
+
+if (purContract.CurrencyId == "USD")
+{
+// USD合同含税总价
+varUsdFareNum = total;
+// USD合同不含税总价
+varUsdTaxFareNum = total - taxesPrice;
+
+// CNY合同含税总价
+varCnyFareNum = varUsdFareNum * purContract.Rate;
+// CNY合同不含税总价
+varCnyTaxFareNum = varUsdTaxFareNum * purContract.Rate;
+}
+else
+{
+// CNY合同含税总价
+varCnyFareNum = total;
+// CNY合同不含税总价
+varCnyTaxFareNum = total - taxesPrice;
+
+// CNY合同含税总价
+varUsdFareNum = varCnyFareNum * purContract.Rate;
+// CNY合同不含税总价
+varUsdTaxFareNum = varCnyTaxFareNum * purContract.Rate;
+}
+
+purContract.CNYTaxFare = varCnyFareNum;
+purContract.CNYTaxFreeFare = varCnyTaxFareNum;
+purContract.USDTaxFare = varUsdFareNum;
+purContract.USDTaxFreeFare = varUsdTaxFareNum;
+purContract.TaxesPrice = taxesPrice;
+db1.Set<PurContract>().Attach(purContract);
+db1.Entry(purContract).State = System.Data.Entity.EntityState.Modified;
+db1.SaveChanges();
+return true;
+}
+return false;
+}
+catch (DbEntityValidationException dbEx)
+{
+throw new ArgumentOutOfRangeException(dbEx.ToString());
+}
+}
+#endregion
+
+
+
+#region 年度/采购合同审批查询
+/// <summary>
+/// 年度/采购合同审批查询
+/// </summary>
+/// <param name="param">查询条件</param>
+/// <param name="listPerfom_by">当前人员权限</param>
+/// <returns></returns>
+public IQueryable<ContractInfoDto> GetAnnualContractApproval(ContractInfoParam param, List<string> listPerfom_by)
+{
+var sort = param.sort;
+var order = param.order;
+
+// 申请方式
+var applyMethod = param.ApplyMethod;
+// 申请类别
+var applyTypeId = param.ApplyTypeId;
+// 合同名称或编号
+var contractName = param.ContractName;
+// 合同状态
+var contractStatus = ContractCommon.ContractApproval;
+// 功能编号 0 年度合同 1采购合同
+int functionId = param.functionId;
+
+var shipId = param.ship;
+// 当前船舶权限
+List<string> lstShips = param.lstShips;
+
+
+PmsSystemDbContext db = new PmsSystemDbContext();
+
+var purContract = from a in db.Set<PurContract>()
+where a.IsDelete != ContractCommon.DeletionFlag
+select a;
+// 年度合同
+if (functionId == 0)
+{
+purContract = purContract.Where(e => (e.ApplyMethod == ContractCommon.ContractAnnualDetails || e.ApplyMethod == ContractCommon.ContractAnnualFramework));
+}
+// 采购合同
+else
+{
+purContract = purContract.Where(e => (e.ApplyMethod != ContractCommon.ContractAnnualDetails && e.ApplyMethod != ContractCommon.ContractAnnualFramework));
+if (!string.IsNullOrEmpty(shipId))
+{
+purContract = purContract.Where(e => (e.ShipId == shipId));
+}
+else
+{
+purContract = purContract.Where(e => lstShips.Contains(e.ShipId));
+}
+}
+
+var q =
+from a in purContract
+
+join b in db.Set<STEMS.Pms.Entity.DicBaseColValue>()
+on new { Status = a.ProcessMethodId != null ? a.ProcessMethodId.ToString() : "", TableName = DicBaseColValue.ContractTableName, ColumnName = DicBaseColValue.ContractProcessMethod }
+equals new { Status = b.ColumnValue, TableName = b.TableName, b.ColumnName } into join2
+from b in join2.DefaultIfEmpty()
+
+join c in db.Set<STEMS.Pms.Entity.DicBaseColValue>()
+on new { Status = a.ApplyMethod != null ? a.ApplyMethod.ToString() : "", TableName = DicBaseColValue.ContractTableName, ColumnName = "ApplyMethodAll" }
+equals new { Status = c.ColumnValue, TableName = c.TableName, c.ColumnName } into join1
+from c in join1.DefaultIfEmpty()
+
+join d in db.Set<STEMS.Pms.Entity.DicBaseColValue>()
+on new { Status = a.ContractStatus != null ? a.ContractStatus.ToString() : "", TableName = DicBaseColValue.ContractTableName, ColumnName = DicBaseColValue.ContractContractStatus }
+equals new { Status = d.ColumnValue, TableName = d.TableName, d.ColumnName } into join3
+from d in join3.DefaultIfEmpty()
+
+join g in db.Set<STEMS.Pms.Entity.DicBaseColValue>()
+on new { Status = a.ApplyTypeId != null ? a.ApplyTypeId.ToString() : "", TableName = DicBaseColValue.ContractTableName, ColumnName = DicBaseColValue.ContractApplyType }
+equals new { Status = g.ColumnValue, TableName = g.TableName, g.ColumnName } into join6
+from g in join6.DefaultIfEmpty()
+
+join e in db.Set<STEMS.Pms.Entity.DicCurrency>() on a.CurrencyId.ToString() equals e.Id into join4
+from e in join4.DefaultIfEmpty()
+join f in db.Set<STEMS.Pms.Entity.Address>() on a.VendorId.ToString() equals f.VendorCode into join5
+from f in join5.DefaultIfEmpty()
+from h in db.Set<FlowProcess>()
+join i in db.Set<BaseShip>() on a.ShipId.ToString() equals i.Id into join10
+from i in join10.DefaultIfEmpty()
+where
+(string.IsNullOrEmpty(applyMethod) || a.ApplyMethod.ToString() == applyMethod)
+&& (string.IsNullOrEmpty(applyTypeId) || a.ApplyTypeId.ToString() == applyTypeId)
+&& a.ContractStatus == contractStatus
+&& ((string.IsNullOrEmpty(contractName) || a.ContractName.Contains(contractName)) || (string.IsNullOrEmpty(contractName) || a.ContractCode.Contains(contractName)))
+&& a.ContaractId == h.ReceiptId
+&& h.CompleteStatus == 0
+&& listPerfom_by.Contains(h.PerformBy)
+orderby a.Opdate descending
+select new ContractInfoDto
+{
+ContaractId = a.ContaractId,
+ContractCode = a.ContractCode,
+ContractName = a.ContractName,
+ProcessMethodName = (languageVale == defaultLanguageVale ? b.ColumnDesc : b.ColumnDescEn),
+ApplyMethod = (languageVale == defaultLanguageVale ? c.ColumnDesc : c.ColumnDescEn),
+ApplyTypeName = (languageVale == defaultLanguageVale ? g.ColumnDesc : g.ColumnDescEn),
+CurrencyName = (languageVale == defaultLanguageVale ? e.Name : e.NameEn),
+VendorName = (languageVale == defaultLanguageVale ? f.VendorName : f.VendorName),
+ContractStatus = a.ContractStatus,
+ContractStatusName = (languageVale == defaultLanguageVale ? d.ColumnDesc : d.ColumnDescEn),
+//ShipName = (languageVale == defaultLanguageVale ? i.NameLocal : i.Name)
+ShipName = (languageVale == defaultLanguageVale ? a.ShipId == "xxxx" ? "岸端" : i.NameLocal : a.ShipId == "xxxx" ? "corp" : i.Name)
+};
+
+IQueryable<ContractInfoDto> dataList = (IQueryable<ContractInfoDto>)q;
+
+if (!string.IsNullOrEmpty(sort) && !string.IsNullOrEmpty(order))
+{
+dataList = dataList.DataSorting(sort, order);
+}
+return dataList;
+}
+#endregion
